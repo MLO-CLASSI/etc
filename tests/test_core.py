@@ -149,6 +149,86 @@ def test_snr_smoke(tmp_path):
     assert row.dark_counts > 0
 
 
+def test_limiting_magnitude_reaches_requested_snr(tmp_path):
+    calc = ETCCalculator()
+    spectrum_file = _write_flat_spectrum(tmp_path / "flat.txt", f_nu_jy=1e-4)
+    limiting_result = calc.get_limiting_magnitudes_from_spectrum(
+        exp_time=60.0,
+        spectrum_file=spectrum_file,
+        wave_centers=[600.0],
+        binsize=5.0,
+        target_snr=5.0,
+        magnitude_band="r",
+        camera_model="Kepler",
+        grating_id=1294,
+        airmass=1.3,
+    )
+    limiting_magnitude = limiting_result["bins"][0].limiting_magnitude
+    forward_result = calc.get_SNR_from_spectrum(
+        exp_time=60.0,
+        spectrum_file=spectrum_file,
+        wave_centers=[600.0],
+        binsize=5.0,
+        target_magnitude=limiting_magnitude,
+        magnitude_band="r",
+        camera_model="Kepler",
+        grating_id=1294,
+        airmass=1.3,
+    )
+
+    assert np.isclose(forward_result["bins"][0].snr, 5.0)
+    assert limiting_result["meta"]["target_snr"] == 5.0
+    assert limiting_result["meta"]["limiting_magnitude_band"] == "r"
+
+
+def test_limiting_magnitude_does_not_depend_on_template_normalization(tmp_path):
+    calc = ETCCalculator()
+    bright_spectrum = _write_flat_spectrum(
+        tmp_path / "bright.txt",
+        f_nu_jy=1e-4,
+    )
+    faint_spectrum = _write_flat_spectrum(
+        tmp_path / "faint.txt",
+        f_nu_jy=1e-6,
+    )
+    common = {
+        "exp_time": 60.0,
+        "wave_centers": [600.0],
+        "binsize": 5.0,
+        "target_snr": 5.0,
+        "magnitude_band": "r",
+        "camera_model": "Kepler",
+        "grating_id": 1294,
+        "airmass": 1.3,
+    }
+    bright_limit = calc.get_limiting_magnitudes_from_spectrum(
+        **common,
+        spectrum_file=bright_spectrum,
+    )
+    faint_limit = calc.get_limiting_magnitudes_from_spectrum(
+        **common,
+        spectrum_file=faint_spectrum,
+    )
+
+    assert np.isclose(
+        bright_limit["bins"][0].limiting_magnitude,
+        faint_limit["bins"][0].limiting_magnitude,
+    )
+
+
+def test_limiting_magnitude_requires_positive_snr():
+    calc = ETCCalculator()
+    with pytest.raises(ValueError, match="Target SNR must be positive"):
+        calc.get_limiting_magnitudes_from_spectrum(
+            exp_time=60.0,
+            spectrum_file="unused.txt",
+            wave_centers=[600.0],
+            binsize=5.0,
+            target_snr=0.0,
+            magnitude_band="r",
+        )
+
+
 def test_fiber_coupling_airmass_and_sky_background_affect_expected_terms(tmp_path):
     calc = ETCCalculator()
     spectrum_file = _write_flat_spectrum(tmp_path / "flat.txt", f_nu_jy=1e-4)

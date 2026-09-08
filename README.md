@@ -46,6 +46,8 @@ Detector sampling parameters are not user inputs. Dispersion and fiber pitch are
 - **Sky Background** (`dark`, `grey`, or `bright`; default `dark`)
 - **Fiber Length** (m; default 10)
 - **Fiber Coupling Efficiency** (fraction; default 1.0)
+- **Limiting-magnitude SNR** (default 5)
+- **Limiting-magnitude band** (`g`, `r`, or `i`)
 
 Fiber coupling represents point-source light lost before entering the fiber. It applies to source counts but not sky counts. The telescope diameter, pixel scale, lens throughput, detector read noise, dispersion, and spatial extraction width are not independent GUI inputs. Instrument geometry and throughput are taken from the shared simulator model instead.
 
@@ -65,6 +67,12 @@ sky    = integrated sky electron rate per arcsec^2 * fiber area * extraction fra
 SNR    = source / sqrt(source + sky + dark + read-noise variance)
 ```
 
+## Limiting magnitudes
+
+The GUI can also solve for the source magnitude that reaches a requested SNR in each wavelength bin. Select the limiting-magnitude g, r, or i band, enter the SNR threshold, and click **Compute limiting magnitudes**. The result is an AB magnitude for every requested wavelength bin.
+
+The selected input spectrum supplies the spectral shape. For example, the limiting g-band magnitude measured from a Type Ia supernova template need not equal the limit obtained from a flat-spectrum source, because those objects distribute the same g-band flux differently with wavelength. The absolute normalization of the input spectrum does not affect the result.
+
 ## Python API
 
 ```python
@@ -83,5 +91,23 @@ result = calc.get_SNR_from_spectrum(
     fiber_coupling_efficiency=0.75,
     target_magnitude=18.0,
     magnitude_band="g",
+)
+```
+
+To solve for the per-bin limiting magnitude instead:
+
+```python
+result = calc.get_limiting_magnitudes_from_spectrum(
+    exp_time=600,
+    spectrum_file=get_default_spectrum_file(),
+    wave_centers=[450, 550, 650, 750],
+    binsize=5,
+    target_snr=5,
+    magnitude_band="r",
+    sky_background="dark",
+    camera_model="Kepler",
+    grating_id=1294,
+    airmass=1.3,
+    fiber_coupling_efficiency=0.75,
 )
 ```

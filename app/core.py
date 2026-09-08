@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import erf, sqrt
 from pathlib import Path
 
@@ -124,6 +124,7 @@ class SNRBinResult:
     dark_counts: float
     snr: float
     component_averages: dict[str, float]
+    limiting_magnitude: float | None = None
 
 
 class ETCCalculator:
@@ -693,6 +694,92 @@ class ETCCalculator:
                 "components": plot_components,
             },
         }
+
+    def get_limiting_magnitudes_from_spectrum(
+        self,
+        exp_time: float,
+        spectrum_file: Path | str,
+        wave_centers: Iterable[float],
+        binsize: float,
+        target_snr: float,
+        magnitude_band: str,
+        sky_background: str = DEFAULT_SKY_BACKGROUND,
+        camera_model: str = "Kepler",
+        grating_id: int | str = 1294,
+        airmass: float = DEFAULT_AIRMASS,
+        fiber_length_m: float | None = None,
+        fiber_coupling_efficiency: float = DEFAULT_FIBER_COUPLING_EFFICIENCY,
+        throughput_toggles: Mapping[str, bool] | None = None,
+        dispersion: float | None = None,
+        extraction_aperture: float | None = None,
+        read_noise_e: float | None = None,
+    ) -> dict[str, object]:
+        """Return the AB magnitude that reaches ``target_snr`` in each bin."""
+        if not np.isfinite(target_snr) or target_snr <= 0:
+            raise ValueError("Target SNR must be positive.")
+
+        spectrum = self.load_spectrum(spectrum_file)
+        reference_flux_jy = self.get_band_flux_density_jy(
+            spectrum,
+            magnitude_band,
+        )
+        reference_magnitude = -2.5 * np.log10(
+            reference_flux_jy / AB_ZERO_POINT_JY
+        )
+        result = self.get_SNR_from_spectrum(
+            exp_time=exp_time,
+            spectrum_file=spectrum_file,
+            wave_centers=wave_centers,
+            binsize=binsize,
+            sky_background=sky_background,
+            camera_model=camera_model,
+            grating_id=grating_id,
+            airmass=airmass,
+            fiber_length_m=fiber_length_m,
+            fiber_coupling_efficiency=fiber_coupling_efficiency,
+            throughput_toggles=throughput_toggles,
+            dispersion=dispersion,
+            extraction_aperture=extraction_aperture,
+            read_noise_e=read_noise_e,
+        )
+
+        limiting_bins = []
+        for row in result["bins"]:
+            background_variance = (
+                row.sky_counts + row.dark_counts + row.read_noise_var
+            )
+            snr_squared = target_snr**2
+            required_source_counts = 0.5 * (
+                snr_squared
+                + target_snr
+                * np.sqrt(snr_squared + 4 * background_variance)
+            )
+            if row.source_counts > 0:
+                source_scale = required_source_counts / row.source_counts
+                limiting_magnitude = reference_magnitude - 2.5 * np.log10(
+                    source_scale
+                )
+            else:
+                limiting_magnitude = np.nan
+
+            limiting_bins.append(
+                replace(
+                    row,
+                    source_counts=float(required_source_counts),
+                    snr=float(target_snr),
+                    limiting_magnitude=float(limiting_magnitude),
+                )
+            )
+
+        result["bins"] = limiting_bins
+        result["meta"].update(
+            {
+                "target_snr": float(target_snr),
+                "limiting_magnitude_band": magnitude_band,
+                "reference_magnitude": float(reference_magnitude),
+            }
+        )
+        return result
 
 
 def get_default_spectrum_file():

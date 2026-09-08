@@ -152,6 +152,8 @@ class ETCGui(tk.Tk):
         self.grating = tk.StringVar(value="1294")
         self.airmass = tk.StringVar(value=str(DEFAULT_AIRMASS))
         self.magnitude_band = tk.StringVar(value="g")
+        self.limiting_magnitude_band = tk.StringVar(value="g")
+        self.limiting_snr = tk.StringVar(value="5")
         self.sky_background = tk.StringVar(value=DEFAULT_SKY_BACKGROUND)
 
         self.toggle_vars = {
@@ -234,9 +236,22 @@ class ETCGui(tk.Tk):
         ttk.Label(fields_frame, text="Sky Background:").grid(row=2, column=2, padx=6, pady=(6, 0), sticky=tk.W)
         ttk.Combobox(fields_frame, textvariable=self.sky_background, values=self.calc.available_sky_backgrounds, state="readonly", width=16).grid(row=3, column=2, padx=6, pady=(0, 6), sticky=tk.W)
 
+        ttk.Label(fields_frame, text="Limiting-magnitude SNR:").grid(row=4, column=0, padx=6, pady=(6, 0), sticky=tk.W)
+        ttk.Entry(fields_frame, textvariable=self.limiting_snr, width=18).grid(row=5, column=0, padx=6, pady=(0, 6), sticky=tk.W)
+
+        ttk.Label(fields_frame, text="Limiting-magnitude band:").grid(row=4, column=1, padx=6, pady=(6, 0), sticky=tk.W)
+        ttk.Combobox(
+            fields_frame,
+            textvariable=self.limiting_magnitude_band,
+            values=self.calc.available_magnitude_bands,
+            state="readonly",
+            width=16,
+        ).grid(row=5, column=1, padx=6, pady=(0, 6), sticky=tk.W)
+
         btn_frame = ttk.Frame(root)
         btn_frame.pack(fill=tk.X, pady=10)
         tk.Button(btn_frame, text="Compute SNR", command=self._compute, bg=GUI_BG, fg="white", activebackground=GUI_BG, activeforeground="white", bd=0).pack(side=tk.LEFT, padx=6)
+        tk.Button(btn_frame, text="Compute limiting magnitude(s)", command=self._compute_limiting_magnitudes, bg=GUI_BG, fg="white", activebackground=GUI_BG, activeforeground="white", bd=0).pack(side=tk.LEFT, padx=6)
         tk.Button(btn_frame, text="Plot throughput", command=self._plot_throughput, bg=GUI_BG, fg="white", activebackground=GUI_BG, activeforeground="white", bd=0).pack(side=tk.LEFT, padx=6)
 
         out_frame = ttk.LabelFrame(root, text="Results")
@@ -418,6 +433,59 @@ class ETCGui(tk.Tk):
                     f"  Sky counts: {row.sky_counts:.3f}\n"
                     f"  SNR: {row.snr:.3f}\n"
                     f"  Mean throughput: {component_text}\n\n"
+                ),
+            )
+
+    def _compute_limiting_magnitudes(self):
+        try:
+            params = self._read_inputs()
+            params.pop("target_magnitude")
+            params.pop("magnitude_band")
+            calc = ETCCalculator(fiber_length_m=params["fiber_length_m"])
+            result = calc.get_limiting_magnitudes_from_spectrum(
+                **params,
+                target_snr=float(self.limiting_snr.get()),
+                magnitude_band=self.limiting_magnitude_band.get(),
+            )
+        except Exception as exc:
+            messagebox.showerror("Limiting magnitude error", str(exc))
+            return
+
+        meta = result["meta"]
+        target_snr = meta["target_snr"]
+        magnitude_band = meta["limiting_magnitude_band"]
+        extraction_aperture = meta["extraction_aperture_pix"]
+        extraction_fraction = meta["extraction_fraction"]
+        read_noise = meta["read_noise_e"]
+        self.output.delete("1.0", tk.END)
+        self.output.insert(
+            tk.END,
+            (
+                f"Camera model: {meta['camera_model']}\n"
+                f"Grating: {meta['grating']}\n"
+                f"Airmass: {meta['airmass']:.2f}\n"
+                f"Dispersion: {meta["dispersion_nm_per_pix"]:.4f} nm/pix\n"
+                f"Extraction aperture: {extraction_aperture:.2f} pix ({extraction_fraction:.2%} of fiber profile)\n"
+                f"Fiber coupling efficiency: {meta['fiber_coupling_efficiency']:.1f}\n"
+                f"Sky background: {meta['sky_background']}\n"
+                f"Detector temperature: {meta['detector_temperature_c']:.0f} C\n"
+                f"Read noise: {read_noise:.2f} e-\n"
+                f"Exposure: {meta['exp_time']:g} s\n\n"
+                # f"In order to achieve S/N={target_snr:g} with a "
+                # f"{meta['exp_time']:g}-sec exposure in the following "
+                # f"wavelength\nbins, the {magnitude_band}-band limiting "
+                # f"magnitude for a source with the given SED is:\n\n"
+                f"Bin center (nm)   Bin width (nm)  Limiting {magnitude_band}"
+                f"-band AB mag to achieve S/N={target_snr:g}\n"
+            ),
+        )
+        for row in result["bins"]:
+            self.output.insert(
+                tk.END,
+                (
+                    f"{row.wave_center_nm:12.1f}      "
+                    f"{params['binsize']:12.1f}           "
+                    f"{row.limiting_magnitude:.2f}\n"
                 ),
             )
 
