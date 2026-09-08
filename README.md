@@ -2,7 +2,7 @@
 
 Computes signal-to-noise ratio (SNR) in one or more wavelength bins for an input spectrum and exposure time.
 
-The application reuses the instrument models in `spectrograph-sim` and the curves in `shared-data`, so the ETC and detector simulator use the same telescope area, atmospheric extinction, detector geometry, grating/optics throughput representation, and photon-flux conversion.
+The application reuses the instrument models in `classi-sim` and the curves in `classi-shared-data`, so the ETC and detector simulator use the same telescope area, atmospheric extinction, detector geometry, grating/optics throughput representation, and photon-flux conversion.
 
 ## Installation and launch
 
@@ -10,7 +10,7 @@ Install the package and its dependencies, then launch the GUI with:
 
 ```bash
 pip install .
-spectrograph-etc
+classi-etc
 ```
 
 The package is imported as `etc`.
