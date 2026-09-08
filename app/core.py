@@ -320,7 +320,7 @@ class ETCCalculator:
             "atmosphere": AtmosphericExtinction(airmass=float(airmass)),
             "fiber": self._fiber_curve(fiber_length_m),
             "misc": ThroughputCurve(np.array([3000.0, 10500.0])*u.AA, np.array([0.95, 0.95]), name="misc"),
-            "collimator": ThroughputCurve.from_csv(CSV_FILES["thorlabs_ar_coating"], name="collimator"),
+            "collimator": ThroughputCurve.from_csv(CSV_FILES["ac508-180-ab"], name="collimator"),
             "grating": self._grating_curve(grating_id),
             "window": ThroughputCurve.from_csv(CSV_FILES["UVFS_coating"], name="window"),
             "detector": ThroughputCurve.from_csv(CSV_FILES[camera.qe_resource], name="detector"),
