@@ -484,7 +484,7 @@ class ETCGui(tk.Tk):
                 tk.END,
                 (
                     f"{row.wave_center_nm:12.1f}      "
-                    f"{params['binsize']:12.1f}           "
+                    f"{params['binsize']:11.1f}           "
                     f"{row.limiting_magnitude:.2f}\n"
                 ),
             )
@@ -516,9 +516,9 @@ class ETCGui(tk.Tk):
 
         binsize = params["binsize"]
         for center in params["wave_centers"]:
-            ax.axvline(center, color="#000000", linestyle="-", linewidth=1.2, alpha=0.9)
-            ax.axvline(center - binsize / 2, color="#7f7f7f", linestyle="--", linewidth=0.9, alpha=0.7)
-            ax.axvline(center + binsize / 2, color="#7f7f7f", linestyle="--", linewidth=0.9, alpha=0.7)
+            ax.axvline(center, color="k", linestyle="-", linewidth=1, alpha=0.9)
+            ax.axvline(center - binsize / 2, color="#7f7f7f", linestyle="--", linewidth=0.8, alpha=0.7)
+            ax.axvline(center + binsize / 2, color="#7f7f7f", linestyle="--", linewidth=0.8, alpha=0.7)
 
         ax.set_xlabel("Wavelength (nm)")
         ax.set_ylabel("Throughput")

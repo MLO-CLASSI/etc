@@ -283,7 +283,7 @@ class ETCCalculator:
         return wavelength, throughput
 
     def _fiber_curve(self, fiber_length_m: float | None = None) -> ThroughputCurve:
-        attenuation = np.loadtxt(CSV_FILES["fiber_attenuation"], delimiter=",")
+        attenuation = np.loadtxt(CSV_FILES["uvns_attenuation"], delimiter=",")
         wavelength_nm, attenuation_db_per_km = attenuation.T
         length = self.fiber_length if fiber_length_m is None else float(fiber_length_m) * u.m
         if length < 0 * u.m:
