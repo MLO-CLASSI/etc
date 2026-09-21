@@ -129,6 +129,14 @@ class SNRBinResult:
 
 class ETCCalculator:
     CAMERA_CONFIGS = {
+        "Aurora": CameraConfig(
+            qe_resource="AR571_qe",
+            nx=6244,
+            ny=4168,
+            pixel_size=3.76*u.um,
+            read_noise=1.0*u.electron,
+            dark_current_minus20=0.002*u.electron/u.s,
+        ),
         "Kepler": CameraConfig(
             qe_resource="gsense400bsi_qe",
             nx=2048,
@@ -506,7 +514,7 @@ class ETCCalculator:
         wave_centers: Iterable[float],
         binsize: float,
         sky_background: str = DEFAULT_SKY_BACKGROUND,
-        camera_model: str = "Kepler",
+        camera_model: str = "Aurora",
         grating_id: int | str = 1294,
         airmass: float = DEFAULT_AIRMASS,
         fiber_length_m: float | None = None,
@@ -704,7 +712,7 @@ class ETCCalculator:
         target_snr: float,
         magnitude_band: str,
         sky_background: str = DEFAULT_SKY_BACKGROUND,
-        camera_model: str = "Kepler",
+        camera_model: str = "Aurora",
         grating_id: int | str = 1294,
         airmass: float = DEFAULT_AIRMASS,
         fiber_length_m: float | None = None,
