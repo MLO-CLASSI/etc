@@ -37,13 +37,16 @@ def test_detector_sampling_is_derived_from_camera():
     kepler_dispersion = calc.dispersion_for_camera("Kepler")
     assert qhy_dispersion > 0
     assert kepler_dispersion > qhy_dispersion
-    spectrograph = calc.spectrograph_model("QHY268")
+    readout_model = calc.instrument_simulator(
+        "QHY268",
+        1294,
+    ).readout_spectrograph
     extraction_aperture = calc.extraction_aperture_for_camera("QHY268")
     assert np.isclose(
         extraction_aperture,
-        spectrograph.fiber_pitch_px.to_value(u.pixel),
+        readout_model.fiber_pitch_px.to_value(u.pixel),
     )
-    assert extraction_aperture > spectrograph.spatial_fwhm_px.to_value(u.pixel)
+    assert extraction_aperture > readout_model.spatial_fwhm_px.to_value(u.pixel)
     assert 0 < calc.extraction_fraction_for_camera("QHY268") <= 1
 
 
@@ -52,7 +55,7 @@ def test_spectrograph_uses_simulator_hardware_components():
     spectrograph = calc.spectrograph_model("Aurora", 1294)
 
     assert spectrograph.detector is FLI_AR571
-    assert spectrograph.detector.binning == 2
+    assert not hasattr(spectrograph.detector, "binning")
     assert spectrograph.grating is NEWPORT_MASTER_1294
     assert spectrograph.collimator is THORLABS_AC508_180_AB
     assert spectrograph.camera_lens is CANON_EF100_F2
@@ -63,6 +66,14 @@ def test_spectrograph_uses_simulator_hardware_components():
     assert simulator.telescope is CLAUD_50INCH
     assert simulator.spectrograph.detector is FLI_AR571
     assert simulator.spectrograph.grating is NEWPORT_MASTER_1294
+    assert simulator.binning == 2
+    assert simulator.readout.detector is FLI_AR571
+    assert simulator.readout_spectrograph.detector is simulator.readout
+    assert simulator.readout.nx == FLI_AR571.nx // 2
+    assert simulator.readout.ny == FLI_AR571.ny // 2
+    assert simulator.readout.pixel_size == 2 * FLI_AR571.pixel_size
+    assert simulator.readout.read_noise == 2 * FLI_AR571.read_noise
+    assert simulator.readout.dark_current == 4 * FLI_AR571.dark_current
 
     custom_fiber = ETCCalculator(fiber_length_m=7.5).spectrograph_model(
         "Aurora",
@@ -73,11 +84,14 @@ def test_spectrograph_uses_simulator_hardware_components():
 
 def test_spectral_pixel_count_uses_spectrograph_mapping():
     calc = ETCCalculator()
-    spectrograph = calc.spectrograph_model("QHY268")
+    readout_model = calc.instrument_simulator(
+        "QHY268",
+        1294,
+    ).readout_spectrograph
     edges_nm = np.array([797.5, 802.5])
     expected = abs(
         np.diff(
-            spectrograph.wavelength_to_x(edges_nm * u.nm).to_value(u.pixel)
+            readout_model.wavelength_to_x(edges_nm * u.nm).to_value(u.pixel)
         )[0]
     )
     measured = calc.spectral_pixel_count_for_bin(
@@ -88,6 +102,38 @@ def test_spectral_pixel_count_uses_spectrograph_mapping():
     linear_approximation = np.diff(edges_nm)[0] / calc.dispersion_for_camera("QHY268")
     assert np.isclose(measured, expected)
     assert not np.isclose(measured, linear_approximation, rtol=1e-3)
+
+
+def test_aurora_sampling_uses_runtime_binning():
+    calc = ETCCalculator()
+    native_model = calc.spectrograph_model("Aurora", 1294)
+    simulator = calc.instrument_simulator("Aurora", 1294)
+    readout_model = simulator.readout_spectrograph
+
+    assert np.isclose(
+        calc.dispersion_for_camera("Aurora", 1294),
+        abs(readout_model.dispersion.to_value(u.nm / u.pixel)),
+    )
+    assert np.isclose(
+        calc.extraction_aperture_for_camera("Aurora"),
+        readout_model.fiber_pitch_px.to_value(u.pixel),
+    )
+    assert np.isclose(
+        calc.default_read_noise_for_camera("Aurora"),
+        simulator.readout.read_noise.to_value(u.electron),
+    )
+    assert np.isclose(
+        calc.get_dark_current("Aurora").to_value(u.electron / u.s),
+        simulator.readout.dark_current.to_value(u.electron / u.s),
+    )
+    assert np.isclose(
+        readout_model.dispersion.to_value(u.nm / u.pixel),
+        2 * native_model.dispersion.to_value(u.nm / u.pixel),
+    )
+    assert np.isclose(
+        readout_model.fiber_pitch_px.to_value(u.pixel),
+        0.5 * native_model.fiber_pitch_px.to_value(u.pixel),
+    )
 
 
 def test_invalid_camera_lists_supported_models():

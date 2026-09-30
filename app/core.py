@@ -141,6 +141,11 @@ class ETCCalculator:
         "Kepler": FLI_KL400,
         "QHY268": QHY_268M,
     }
+    CAMERA_BINNING = {
+        "Aurora": 2,
+        "Kepler": 1,
+        "QHY268": 1,
+    }
     GRATING_MODELS = {
         1294: NEWPORT_MASTER_1294,
         1229: NEWPORT_MASTER_1229,
@@ -239,18 +244,19 @@ class ETCCalculator:
         )
 
     def default_read_noise_for_camera(self, camera_model: str) -> float:
-        return self.detector_model(camera_model).read_noise.to_value(u.electron)
+        simulator = self.instrument_simulator(camera_model, 1294)
+        return simulator.readout.read_noise.to_value(u.electron)
 
     def dispersion_for_camera(
         self,
         camera_model: str,
         grating_id: int | str = 1294,
     ) -> float:
-        return abs(
-            self.spectrograph_model(camera_model, grating_id).dispersion.to_value(
-                u.nm / u.pixel
-            )
-        )
+        readout_model = self.instrument_simulator(
+            camera_model,
+            grating_id,
+        ).readout_spectrograph
+        return abs(readout_model.dispersion.to_value(u.nm / u.pixel))
 
     def spectral_pixel_count_for_bin(
         self,
@@ -262,20 +268,31 @@ class ETCCalculator:
         """Return the detector width of a wavelength bin in pixels."""
         if wave_max_nm <= wave_min_nm:
             raise ValueError("Wavelength-bin maximum must exceed its minimum.")
-        x_edges = self.spectrograph_model(camera_model, grating_id).wavelength_to_x(
+        readout_model = self.instrument_simulator(
+            camera_model,
+            grating_id,
+        ).readout_spectrograph
+        x_edges = readout_model.wavelength_to_x(
             np.array([wave_min_nm, wave_max_nm]) * u.nm
         )
         return float(abs(np.diff(x_edges.to_value(u.pixel))[0]))
 
     def extraction_aperture_for_camera(self, camera_model: str) -> float:
         """Return the full trace-to-trace spacing in detector pixels."""
-        return self.spectrograph_model(camera_model).fiber_pitch_px.to_value(u.pixel)
+        readout_model = self.instrument_simulator(
+            camera_model,
+            1294,
+        ).readout_spectrograph
+        return readout_model.fiber_pitch_px.to_value(u.pixel)
 
     def extraction_fraction_for_camera(self, camera_model: str) -> float:
         """Fraction of a Gaussian fiber profile inside one fiber-pitch box."""
-        spectrograph = self.spectrograph_model(camera_model)
-        half_width = 0.5 * spectrograph.fiber_pitch_px.to_value(u.pixel)
-        sigma = spectrograph.spatial_sigma_px.to_value(u.pixel)
+        readout_model = self.instrument_simulator(
+            camera_model,
+            1294,
+        ).readout_spectrograph
+        half_width = 0.5 * readout_model.fiber_pitch_px.to_value(u.pixel)
+        sigma = readout_model.spatial_sigma_px.to_value(u.pixel)
         return float(erf(half_width / (sqrt(2) * sigma)))
 
     def instrument_simulator(
@@ -301,6 +318,7 @@ class ETCCalculator:
                 if sky_background is None
                 else self.sky_model(sky_background)
             ),
+            binning=self.CAMERA_BINNING[camera_model],
         )
 
     def throughput_curves(
@@ -368,6 +386,7 @@ class ETCCalculator:
                 fiber_length_m,
             ),
             telescope=CLAUD_50INCH,
+            binning=self.CAMERA_BINNING[camera_model],
             throughputs=active_curves,
         )
         values["total"] = simulator.combined_throughput(
@@ -378,7 +397,7 @@ class ETCCalculator:
 
     @classmethod
     def get_dark_current(cls, camera_model: str) -> u.Quantity:
-        return cls.detector_model(camera_model).dark_current
+        return cls().instrument_simulator(camera_model, 1294).readout.dark_current
 
     @staticmethod
     def load_spectrum(spectrum_file: Path | str) -> np.ndarray:
@@ -539,7 +558,6 @@ class ETCCalculator:
         if not 0 <= fiber_coupling_efficiency <= 1:
             raise ValueError("Fiber coupling efficiency must be between 0 and 1.")
 
-        detector = self.detector_model(camera_model)
         spec = self.load_spectrum(spectrum_file)
         spectrum_scale_factor = 1.0
         if target_magnitude is not None:
@@ -551,24 +569,32 @@ class ETCCalculator:
                 magnitude_band=magnitude_band,
             )
 
-        use_spectrograph_mapping = dispersion is None
-        if use_spectrograph_mapping:
-            dispersion = self.dispersion_for_camera(camera_model, grating_id)
-        if extraction_aperture is None:
-            extraction_aperture = self.extraction_aperture_for_camera(camera_model)
-        if read_noise_e is None:
-            read_noise_e = self.default_read_noise_for_camera(camera_model)
-        if dispersion <= 0 or extraction_aperture <= 0 or read_noise_e < 0:
-            raise ValueError("Detector extraction parameters must be non-negative and non-zero.")
-
-        dark_current = self.get_dark_current(camera_model).to_value(u.electron/u.s)
-        extraction_fraction = self.extraction_fraction_for_camera(camera_model)
         simulator = self.instrument_simulator(
             camera_model,
             grating_id,
             airmass,
             fiber_length_m,
             sky_background,
+        )
+        readout = simulator.readout
+        readout_model = simulator.readout_spectrograph
+        use_spectrograph_mapping = dispersion is None
+        if use_spectrograph_mapping:
+            dispersion = abs(
+                readout_model.dispersion.to_value(u.nm / u.pixel)
+            )
+        if extraction_aperture is None:
+            extraction_aperture = readout_model.fiber_pitch_px.to_value(u.pixel)
+        if read_noise_e is None:
+            read_noise_e = readout.read_noise.to_value(u.electron)
+        if dispersion <= 0 or extraction_aperture <= 0 or read_noise_e < 0:
+            raise ValueError("Detector extraction parameters must be non-negative and non-zero.")
+
+        dark_current = readout.dark_current.to_value(u.electron/u.s)
+        half_width = 0.5 * readout_model.fiber_pitch_px.to_value(u.pixel)
+        spatial_sigma = readout_model.spatial_sigma_px.to_value(u.pixel)
+        extraction_fraction = float(
+            erf(half_width / (sqrt(2) * spatial_sigma))
         )
         sky_wavelength, sky_surface_brightness = simulator.sky.spectrum()
         sky_wave_nm = sky_wavelength.to_value(u.nm)
@@ -594,12 +620,10 @@ class ETCCalculator:
                 ) from exc
 
             if use_spectrograph_mapping:
-                n_wave = self.spectral_pixel_count_for_bin(
-                    camera_model,
-                    wave_min,
-                    wave_max,
-                    grating_id,
+                x_edges = readout_model.wavelength_to_x(
+                    np.array([wave_min, wave_max]) * u.nm
                 )
+                n_wave = float(abs(np.diff(x_edges.to_value(u.pixel))[0]))
             else:
                 n_wave = binsize / dispersion
             n_total = n_wave * extraction_aperture
@@ -691,7 +715,7 @@ class ETCCalculator:
                 "sky_spectrum": simulator.sky.spectrum_resource,
                 "camera_model": camera_model,
                 "read_noise_e": float(read_noise_e),
-                "detector_binning": int(detector.binning),
+                "detector_binning": int(simulator.binning),
                 "grating": grating_id,
                 "airmass": float(airmass),
                 "spectrum_scale_factor": float(spectrum_scale_factor),
