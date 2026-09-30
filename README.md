@@ -55,9 +55,9 @@ The detector is assumed to operate at -20&deg;C. Each camera's fixed -20&deg;C d
 
 ## Sky and extraction model
 
-The selectable dark, grey, and bright backgrounds use the corresponding line-resolved DESI benchmark sky spectra distributed with [desimodel](https://github.com/desihub/desimodel). They span 3500-10000 &#8491; in increments of 0.1 &#8491;, so narrow airglow features are integrated on the sky spectrum's own grid rather than on the potentially sparse source spectrum wavelength grid. The default is the "dark" spectrum, which equates to a sky brightness of approximately 20.6 msas in the $r$-band.
+The selectable dark, grey, and bright backgrounds use the corresponding `SkySpectrum` presets from `classi-sim`, backed by the line-resolved DESI benchmark spectra distributed with [desimodel](https://github.com/desihub/desimodel). They span 3500-10000 &#8491; in increments of 0.1 &#8491;, so narrow airglow features are integrated on the sky spectrum's own grid rather than on the potentially sparse source spectrum wavelength grid. The default is the "dark" spectrum, which equates to a sky brightness of approximately 20.6 msas in the $r$-band.
 
-Sky background is integrated over the fiber's circular on-sky aperture. Source and sky counts are then multiplied by the same Gaussian-profile extraction fraction for the single fiber pitch extraction box. Fiber coupling is applied only to the source&mdash;sky flux enters the fiber no matter what. Dark-current and read-noise variance use the same extraction-box pixel count.
+`classi-sim` supplies the fiber's circular on-sky aperture and the downstream sky throughput, excluding atmospheric extinction because the DESI spectra already describe the sky at the observatory. Source and sky counts are then multiplied by the same Gaussian-profile extraction fraction for the single fiber pitch extraction box. Fiber coupling is applied only to the source&mdash;sky flux enters the fiber no matter what. Dark-current and read-noise variance use the same extraction-box pixel count.
 
 For each wavelength bin the ETC calculates
 

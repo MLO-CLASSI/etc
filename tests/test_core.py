@@ -8,6 +8,9 @@ from etc.core import AB_ZERO_POINT_JY, ETCCalculator
 from simulator.components import (
     CANON_EF100_F2,
     CLAUD_50INCH,
+    DESI_SKY_BRIGHT,
+    DESI_SKY_DARK,
+    DESI_SKY_GREY,
     E02_PICKOFF,
     FGL400S,
     FLI_AR571,
@@ -146,13 +149,50 @@ def test_total_throughput_uses_simulator_combination():
 def test_line_resolved_sky_spectra_are_available():
     calc = ETCCalculator()
     assert calc.available_sky_backgrounds == ["dark", "grey", "bright"]
-    for sky_background in calc.available_sky_backgrounds:
-        wavelength, flux_density = calc.sky_spectrum(sky_background)
+    expected = [DESI_SKY_DARK, DESI_SKY_GREY, DESI_SKY_BRIGHT]
+    for sky_background, sky_model in zip(
+        calc.available_sky_backgrounds,
+        expected,
+        strict=True,
+    ):
+        assert calc.sky_model(sky_background) is sky_model
+        wavelength, flux_density = sky_model.spectrum()
         assert wavelength.size == flux_density.size
         assert wavelength.size > 10_000
         assert wavelength.min() < 400 * u.nm
         assert wavelength.max() > 900 * u.nm
         assert np.nanmax(flux_density.value) > 10 * np.nanmedian(flux_density.value)
+
+
+def test_sky_configuration_uses_simulator_model_and_geometry():
+    calc = ETCCalculator()
+    simulator = calc.instrument_simulator(
+        "Kepler",
+        1294,
+        airmass=1.3,
+        sky_background="dark",
+    )
+
+    assert simulator.sky is DESI_SKY_DARK
+    assert simulator.fiber_sky_area.unit.is_equivalent(u.arcsec**2)
+    assert simulator.fiber_sky_area > 0 * u.arcsec**2
+
+
+def test_sky_throughput_uses_simulator_atmosphere_exclusion():
+    calc = ETCCalculator()
+    wavelength_nm = np.array([500.0, 600.0, 700.0])
+    components = calc.get_throughput_components(
+        wavelength_nm,
+        camera_model="Kepler",
+        grating_id=1294,
+        airmass=2.0,
+        include_atmosphere=False,
+    )
+    expected = np.ones_like(wavelength_nm)
+    for name in calc.THROUGHPUT_COMPONENTS:
+        if name != "atmosphere":
+            expected *= components[name]
+    assert np.allclose(components["total"], expected)
 
 
 def test_snr_smoke(tmp_path):

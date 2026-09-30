@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 from astropy import constants as const, units as u
-from astropy.table import Table
 from shared_data import REFERENCE_SPECTRA
 from simulator import (
     AtmosphericExtinction,
@@ -19,6 +18,9 @@ from simulator.components import (
     CANON_EF100_F2,
     CLASSI_FIBER,
     CLAUD_50INCH,
+    DESI_SKY_BRIGHT,
+    DESI_SKY_DARK,
+    DESI_SKY_GREY,
     E02_PICKOFF,
     FGL400S,
     FLI_AR571,
@@ -31,6 +33,7 @@ from simulator.components import (
     DetectorModel,
     FiberModel,
     GratingModel,
+    SkySpectrum,
     ThroughputCurve,
 )
 from simulator.core import FLUX_DENSITY_UNIT
@@ -42,10 +45,10 @@ FIBER_COUNT = 7
 FIBER_PITCH = 250*u.micron
 DETECTOR_TEMPERATURE_C = -20.0
 DEFAULT_SKY_BACKGROUND = "dark"
-SKY_SPECTRUM_RESOURCES = {
-    "dark": "desi_sky_dark",
-    "grey": "desi_sky_grey",
-    "bright": "desi_sky_bright",
+SKY_BACKGROUNDS = {
+    "dark": DESI_SKY_DARK,
+    "grey": DESI_SKY_GREY,
+    "bright": DESI_SKY_BRIGHT,
 }
 
 # Approximate LSST g/r/i photon-counting response curves. Wavelengths in Angstroms.
@@ -175,7 +178,17 @@ class ETCCalculator:
 
     @property
     def available_sky_backgrounds(self) -> list[str]:
-        return list(SKY_SPECTRUM_RESOURCES)
+        return list(SKY_BACKGROUNDS)
+
+    @classmethod
+    def sky_model(cls, sky_background: str) -> SkySpectrum:
+        try:
+            return SKY_BACKGROUNDS[sky_background]
+        except KeyError as exc:
+            supported = ", ".join(SKY_BACKGROUNDS)
+            raise ValueError(
+                f"Unsupported sky background '{sky_background}'. Supported: {supported}"
+            ) from exc
 
     @classmethod
     def detector_model(cls, camera_model: str) -> DetectorModel:
@@ -265,19 +278,13 @@ class ETCCalculator:
         sigma = spectrograph.spatial_sigma_px.to_value(u.pixel)
         return float(erf(half_width / (sqrt(2) * sigma)))
 
-    @property
-    def fiber_sky_area(self) -> u.Quantity:
-        angular_diameter = (
-            CLASSI_FIBER.core_diameter / CLAUD_50INCH.focal_length
-        ).decompose() * u.rad
-        return (np.pi * (angular_diameter / 2) ** 2).to(u.arcsec**2)
-
     def instrument_simulator(
         self,
         camera_model: str,
         grating_id: int | str,
         airmass: float = DEFAULT_AIRMASS,
         fiber_length_m: float | None = None,
+        sky_background: str | None = None,
     ) -> InstrumentSimulator:
         if airmass <= 0:
             raise ValueError("Airmass must be positive.")
@@ -289,6 +296,11 @@ class ETCCalculator:
             ),
             telescope=CLAUD_50INCH,
             atmosphere=AtmosphericExtinction(airmass=float(airmass)),
+            sky=(
+                None
+                if sky_background is None
+                else self.sky_model(sky_background)
+            ),
         )
 
     def throughput_curves(
@@ -327,6 +339,7 @@ class ETCCalculator:
         airmass: float = DEFAULT_AIRMASS,
         fiber_length_m: float | None = None,
         throughput_toggles: Mapping[str, bool] | None = None,
+        include_atmosphere: bool = True,
     ) -> dict[str, np.ndarray]:
         wavelength = np.asarray(wave_nm, dtype=float) * u.nm
         curves = self.throughput_curves(
@@ -357,7 +370,10 @@ class ETCCalculator:
             telescope=CLAUD_50INCH,
             throughputs=active_curves,
         )
-        values["total"] = simulator.combined_throughput(wavelength)
+        values["total"] = simulator.combined_throughput(
+            wavelength,
+            include_atmosphere=include_atmosphere,
+        )
         return values
 
     @classmethod
@@ -469,24 +485,6 @@ class ETCCalculator:
         scaled_spectrum["flux"] *= scale_factor
         return scaled_spectrum, scale_factor
 
-    def sky_spectrum(self, sky_background: str = DEFAULT_SKY_BACKGROUND) -> tuple[u.Quantity, u.Quantity]:
-        """Return the selected line-resolved DESI sky spectrum.
-
-        The flux-density values are numerically per square arcsecond. The solid
-        angle is applied explicitly after integrating the spectral photon rate.
-        """
-        try:
-            resource = SKY_SPECTRUM_RESOURCES[sky_background]
-        except KeyError as exc:
-            supported = ", ".join(self.available_sky_backgrounds)
-            raise ValueError(
-                f"Unsupported sky background '{sky_background}'. Supported: {supported}"
-            ) from exc
-        values = Table.read(REFERENCE_SPECTRA[resource])
-        wavelength = values["wavelength"].quantity
-        flux_density = values["flux"].quantity
-        return wavelength, flux_density
-
     @staticmethod
     def _integrated_electron_rate(
         wavelength: u.Quantity,
@@ -565,13 +563,16 @@ class ETCCalculator:
 
         dark_current = self.get_dark_current(camera_model).to_value(u.electron/u.s)
         extraction_fraction = self.extraction_fraction_for_camera(camera_model)
-        sky_wavelength, sky_surface_brightness = self.sky_spectrum(sky_background)
+        simulator = self.instrument_simulator(
+            camera_model,
+            grating_id,
+            airmass,
+            fiber_length_m,
+            sky_background,
+        )
+        sky_wavelength, sky_surface_brightness = simulator.sky.spectrum()
         sky_wave_nm = sky_wavelength.to_value(u.nm)
-        sky_flux_density = sky_surface_brightness * self.fiber_sky_area
-        sky_throughput_toggles = dict(throughput_toggles or {})
-        # The sky spectrum is an at-observatory surface brightness, so applying
-        # atmospheric extinction again would attenuate it twice.
-        sky_throughput_toggles["atmosphere"] = False
+        sky_flux_density = sky_surface_brightness * simulator.fiber_sky_area
 
         results: list[SNRBinResult] = []
         plot_wave = None
@@ -640,7 +641,8 @@ class ETCCalculator:
                 grating_id=grating_id,
                 airmass=airmass,
                 fiber_length_m=fiber_length_m,
-                throughput_toggles=sky_throughput_toggles,
+                throughput_toggles=throughput_toggles,
+                include_atmosphere=False,
             )
             sky_rate = self._integrated_electron_rate(
                 sky_wave_bin,
@@ -683,10 +685,10 @@ class ETCCalculator:
                 "dispersion_nm_per_pix": float(dispersion),
                 "dark_current": float(dark_current),
                 "detector_temperature_c": DETECTOR_TEMPERATURE_C,
-                "fiber_sky_area_arcsec2": self.fiber_sky_area.to_value(u.arcsec**2),
+                "fiber_sky_area_arcsec2": simulator.fiber_sky_area.to_value(u.arcsec**2),
                 "fiber_coupling_efficiency": float(fiber_coupling_efficiency),
                 "sky_background": sky_background,
-                "sky_spectrum": SKY_SPECTRUM_RESOURCES[sky_background],
+                "sky_spectrum": simulator.sky.spectrum_resource,
                 "camera_model": camera_model,
                 "read_noise_e": float(read_noise_e),
                 "detector_binning": int(detector.binning),
