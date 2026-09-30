@@ -33,10 +33,11 @@ The optional **Flux scale magnitude** field rescales the entire input spectrum s
 - **Grating:** Newport 1229, Newport 1294, or the ThorLabs grating curve.
 - **Airmass:** numerical airmass applied to the Palomar atmospheric-extinction curve from `classi-sim`.
 - **Camera model:** selects a `classi-sim` native detector component, including its QE, dimensions, pixel size, read noise, and dark current.
+- **Binning:** square detector readout binning. The editable selector offers common valid values for the selected camera.
 
 The throughput toggles expose the same automatically assembled component chain used by the simulator: atmosphere, pickoff mirror, order-blocking filter, fiber, collimator, grating, camera lens, detector window, and detector QE. A component not configured for a particular detector, such as a separate window curve, is represented by unity throughput.
 
-Detector sampling parameters are not user inputs. The ETC constructs a native-detector `SpectrographModel` with `from_components()`, selects the camera's ETC readout binning at `InstrumentSimulator` runtime, and uses the simulator's binned readout model for dispersion, fiber pitch, read noise, and dark current. Each extraction box is one full fiber pitch wide, extending halfway toward each adjacent trace.
+The ETC constructs a native-detector `SpectrographModel` with `from_components()`, applies the selected binning at `InstrumentSimulator` runtime, and uses the simulator's binned readout model for dispersion, fiber pitch, read noise, and dark current. Each extraction box is one full fiber pitch wide, extending halfway toward each adjacent trace.
 
 ## SNR inputs
 
@@ -51,7 +52,7 @@ Detector sampling parameters are not user inputs. The ETC constructs a native-de
 
 Fiber coupling represents point-source light lost before entering the fiber. It applies to source counts but not sky counts. The telescope diameter, pixel scale, lens throughput, detector read noise, dispersion, and spatial extraction width are not independent GUI inputs. Instrument geometry and throughput are taken from the shared simulator model instead.
 
-The detector is assumed to operate at -20&deg;C. Each camera's fixed -20&deg;C native-pixel dark-current value is used, and there is no temperature input. The ETC requests 2&times;2 runtime binning for Aurora and 1&times;1 for Kepler and QHY268. Effective output-pixel size, read noise, dark current, and spectrograph coordinates come from the corresponding `classi-sim` readout model.
+The detector is assumed to operate at -20&deg;C. Each camera's fixed -20&deg;C native-pixel dark-current value is used, and there is no temperature input. Binning defaults to 2&times;2 for Aurora and 1&times;1 for Kepler and QHY268. A typed binning value must be a positive integer that evenly divides both native detector dimensions. Effective output-pixel size, read noise, dark current, and spectrograph coordinates come from the corresponding `classi-sim` readout model.
 
 ## Sky and extraction model
 
@@ -86,6 +87,7 @@ result = calc.get_SNR_from_spectrum(
     binsize=5,
     sky_background="grey",
     camera_model="QHY268",
+    binning=2,
     grating_id=1294,
     airmass=1.3,
     fiber_coupling_efficiency=0.75,
@@ -106,6 +108,7 @@ result = calc.get_limiting_magnitudes_from_spectrum(
     magnitude_band="r",
     sky_background="dark",
     camera_model="Kepler",
+    binning=1,
     grating_id=1294,
     airmass=1.3,
     fiber_coupling_efficiency=0.75,

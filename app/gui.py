@@ -150,6 +150,7 @@ class ETCGui(tk.Tk):
         self.calc = ETCCalculator()
         self.spectrum_path = tk.StringVar(value="")
         self.camera_model = tk.StringVar(value=self.calc.available_camera_models[0])
+        self.binning = tk.StringVar()
         self.grating = tk.StringVar(value="1294")
         self.airmass = tk.StringVar(value=str(DEFAULT_AIRMASS))
         self.magnitude_band = tk.StringVar(value="g")
@@ -201,8 +202,25 @@ class ETCGui(tk.Tk):
         ttk.Entry(mode_frame, textvariable=self.airmass, width=10).grid(row=0, column=3, padx=6, pady=6)
 
         ttk.Label(mode_frame, text="Camera model:").grid(row=0, column=4, padx=6, pady=6, sticky=tk.W)
-        ttk.Combobox(mode_frame, textvariable=self.camera_model, values=self.calc.available_camera_models, state="readonly", width=12,
-        ).grid(row=0, column=5, padx=6, pady=6)
+        camera_selector = ttk.Combobox(
+            mode_frame,
+            textvariable=self.camera_model,
+            values=self.calc.available_camera_models,
+            state="readonly",
+            width=12,
+        )
+        camera_selector.grid(row=0, column=5, padx=6, pady=6)
+        camera_selector.bind("<<ComboboxSelected>>", self._set_camera_binning_default)
+
+        ttk.Label(mode_frame, text="Binning:").grid(row=0, column=6, padx=6, pady=6, sticky=tk.W)
+        self.binning_selector = ttk.Combobox(
+            mode_frame,
+            textvariable=self.binning,
+            state="normal",
+            width=6,
+        )
+        self.binning_selector.grid(row=0, column=7, padx=6, pady=6)
+        self._set_camera_binning_default()
 
         toggles_frame = ttk.LabelFrame(root, text="Included Throughput Factors:")
         toggles_frame.pack(fill=tk.X, pady=6)
@@ -265,6 +283,17 @@ class ETCGui(tk.Tk):
         out_frame.pack(fill=tk.BOTH, expand=True)
         self.output = tk.Text(out_frame, wrap=tk.WORD, height=16, bg=GUI_BG, fg="white", insertbackground="white")
         self.output.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+    def _set_camera_binning_default(self, _event=None):
+        camera_model = self.camera_model.get()
+        detector = self.calc.detector_model(camera_model)
+        choices = [
+            str(candidate)
+            for candidate in range(1, 5)
+            if detector.nx % candidate == 0 and detector.ny % candidate == 0
+        ]
+        self.binning_selector.configure(values=choices)
+        self.binning.set(str(self.calc.CAMERA_BINNING[camera_model]))
 
     def _browse(self, initial_dir: str | None = None):
         dialog = tk.Toplevel(self)
@@ -375,6 +404,7 @@ class ETCGui(tk.Tk):
                 "binsize": float(self.entries["binsize_nm"].value()),
                 "sky_background": self.sky_background.get(),
                 "camera_model": self.camera_model.get(),
+                "binning": int(self.binning.get()),
                 "grating_id": int(grating) if grating.isdigit() else grating,
                 "airmass": float(self.airmass.get()),
                 "fiber_length_m": float(self.entries["fiber_length_m"].value()),

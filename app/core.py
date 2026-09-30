@@ -214,11 +214,7 @@ class ETCCalculator:
             ) from exc
 
     def fiber_model(self, fiber_length_m: float | None = None) -> FiberModel:
-        length = (
-            self.fiber_length
-            if fiber_length_m is None
-            else float(fiber_length_m) * u.m
-        )
+        length = self.fiber_length if fiber_length_m is None else float(fiber_length_m)*u.m
         if length < 0 * u.m:
             raise ValueError("Fiber length cannot be negative.")
         return replace(CLASSI_FIBER, length=length)
@@ -243,18 +239,28 @@ class ETCCalculator:
             optical_elements=(E02_PICKOFF, FGL400S),
         )
 
-    def default_read_noise_for_camera(self, camera_model: str) -> float:
-        simulator = self.instrument_simulator(camera_model, 1294)
+    def default_read_noise_for_camera(
+        self,
+        camera_model: str,
+        binning: int | None = None,
+    ) -> float:
+        simulator = self.instrument_simulator(
+            camera_model,
+            1294,
+            binning=binning,
+        )
         return simulator.readout.read_noise.to_value(u.electron)
 
     def dispersion_for_camera(
         self,
         camera_model: str,
         grating_id: int | str = 1294,
+        binning: int | None = None,
     ) -> float:
         readout_model = self.instrument_simulator(
             camera_model,
             grating_id,
+            binning=binning,
         ).readout_spectrograph
         return abs(readout_model.dispersion.to_value(u.nm / u.pixel))
 
@@ -264,6 +270,7 @@ class ETCCalculator:
         wave_min_nm: float,
         wave_max_nm: float,
         grating_id: int | str = 1294,
+        binning: int | None = None,
     ) -> float:
         """Return the detector width of a wavelength bin in pixels."""
         if wave_max_nm <= wave_min_nm:
@@ -271,25 +278,36 @@ class ETCCalculator:
         readout_model = self.instrument_simulator(
             camera_model,
             grating_id,
+            binning=binning,
         ).readout_spectrograph
         x_edges = readout_model.wavelength_to_x(
             np.array([wave_min_nm, wave_max_nm]) * u.nm
         )
         return float(abs(np.diff(x_edges.to_value(u.pixel))[0]))
 
-    def extraction_aperture_for_camera(self, camera_model: str) -> float:
+    def extraction_aperture_for_camera(
+        self,
+        camera_model: str,
+        binning: int | None = None,
+    ) -> float:
         """Return the full trace-to-trace spacing in detector pixels."""
         readout_model = self.instrument_simulator(
             camera_model,
             1294,
+            binning=binning,
         ).readout_spectrograph
         return readout_model.fiber_pitch_px.to_value(u.pixel)
 
-    def extraction_fraction_for_camera(self, camera_model: str) -> float:
+    def extraction_fraction_for_camera(
+        self,
+        camera_model: str,
+        binning: int | None = None,
+    ) -> float:
         """Fraction of a Gaussian fiber profile inside one fiber-pitch box."""
         readout_model = self.instrument_simulator(
             camera_model,
             1294,
+            binning=binning,
         ).readout_spectrograph
         half_width = 0.5 * readout_model.fiber_pitch_px.to_value(u.pixel)
         sigma = readout_model.spatial_sigma_px.to_value(u.pixel)
@@ -302,15 +320,19 @@ class ETCCalculator:
         airmass: float = DEFAULT_AIRMASS,
         fiber_length_m: float | None = None,
         sky_background: str | None = None,
+        binning: int | None = None,
     ) -> InstrumentSimulator:
         if airmass <= 0:
             raise ValueError("Airmass must be positive.")
+        spectrograph = self.spectrograph_model(
+            camera_model,
+            grating_id,
+            fiber_length_m,
+        )
+        if binning is None:
+            binning = self.CAMERA_BINNING[camera_model]
         return InstrumentSimulator(
-            spectrograph=self.spectrograph_model(
-                camera_model,
-                grating_id,
-                fiber_length_m,
-            ),
+            spectrograph=spectrograph,
             telescope=CLAUD_50INCH,
             atmosphere=AtmosphericExtinction(airmass=float(airmass)),
             sky=(
@@ -318,7 +340,7 @@ class ETCCalculator:
                 if sky_background is None
                 else self.sky_model(sky_background)
             ),
-            binning=self.CAMERA_BINNING[camera_model],
+            binning=binning,
         )
 
     def throughput_curves(
@@ -396,8 +418,16 @@ class ETCCalculator:
         return values
 
     @classmethod
-    def get_dark_current(cls, camera_model: str) -> u.Quantity:
-        return cls().instrument_simulator(camera_model, 1294).readout.dark_current
+    def get_dark_current(
+        cls,
+        camera_model: str,
+        binning: int | None = None,
+    ) -> u.Quantity:
+        return cls().instrument_simulator(
+            camera_model,
+            1294,
+            binning=binning,
+        ).readout.dark_current
 
     @staticmethod
     def load_spectrum(spectrum_file: Path | str) -> np.ndarray:
@@ -539,6 +569,7 @@ class ETCCalculator:
         dispersion: float | None = None,
         extraction_aperture: float | None = None,
         read_noise_e: float | None = None,
+        binning: int | None = None,
     ) -> dict[str, object]:
         wave_centers = np.asarray(list(wave_centers), dtype=float)
         if wave_centers.size == 0:
@@ -575,6 +606,7 @@ class ETCCalculator:
             airmass,
             fiber_length_m,
             sky_background,
+            binning=binning,
         )
         readout = simulator.readout
         readout_model = simulator.readout_spectrograph
@@ -746,6 +778,7 @@ class ETCCalculator:
         dispersion: float | None = None,
         extraction_aperture: float | None = None,
         read_noise_e: float | None = None,
+        binning: int | None = None,
     ) -> dict[str, object]:
         """Return the AB magnitude that reaches ``target_snr`` in each bin."""
         if not np.isfinite(target_snr) or target_snr <= 0:
@@ -774,6 +807,7 @@ class ETCCalculator:
             dispersion=dispersion,
             extraction_aperture=extraction_aperture,
             read_noise_e=read_noise_e,
+            binning=binning,
         )
 
         limiting_bins = []

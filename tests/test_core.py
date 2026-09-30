@@ -108,8 +108,10 @@ def test_aurora_sampling_uses_runtime_binning():
     calc = ETCCalculator()
     native_model = calc.spectrograph_model("Aurora", 1294)
     simulator = calc.instrument_simulator("Aurora", 1294)
+    native_simulator = calc.instrument_simulator("Aurora", 1294, binning=1)
     readout_model = simulator.readout_spectrograph
 
+    assert native_simulator.binning == 1
     assert np.isclose(
         calc.dispersion_for_camera("Aurora", 1294),
         abs(readout_model.dispersion.to_value(u.nm / u.pixel)),
@@ -134,6 +136,16 @@ def test_aurora_sampling_uses_runtime_binning():
         readout_model.fiber_pitch_px.to_value(u.pixel),
         0.5 * native_model.fiber_pitch_px.to_value(u.pixel),
     )
+    assert np.isclose(
+        calc.dispersion_for_camera("Aurora", 1294, binning=1),
+        abs(native_model.dispersion.to_value(u.nm / u.pixel)),
+    )
+    assert np.isclose(
+        calc.default_read_noise_for_camera("Aurora", binning=1),
+        FLI_AR571.read_noise.to_value(u.electron),
+    )
+    with pytest.raises(ValueError, match="evenly divide"):
+        calc.instrument_simulator("Aurora", 1294, binning=3)
 
 
 def test_invalid_camera_lists_supported_models():
@@ -250,6 +262,7 @@ def test_snr_smoke(tmp_path):
         wave_centers=[600.0],
         binsize=5.0,
         camera_model="Kepler",
+        binning=2,
         grating_id=1294,
         airmass=1.3,
     )
@@ -259,10 +272,15 @@ def test_snr_smoke(tmp_path):
     assert result["meta"]["dispersion_nm_per_pix"] > 0
     assert result["meta"]["fiber_sky_area_arcsec2"] > 0
     assert result["meta"]["detector_temperature_c"] == -20.0
-    assert result["meta"]["detector_binning"] == 1
+    assert result["meta"]["detector_binning"] == 2
     assert np.isclose(
         row.n_wave_pixels,
-        calc.spectral_pixel_count_for_bin("Kepler", 597.5, 602.5),
+        calc.spectral_pixel_count_for_bin(
+            "Kepler",
+            597.5,
+            602.5,
+            binning=2,
+        ),
     )
     assert row.n_total_pixels > row.n_wave_pixels
     assert row.read_noise_var > 0
@@ -280,6 +298,7 @@ def test_limiting_magnitude_reaches_requested_snr(tmp_path):
         target_snr=5.0,
         magnitude_band="r",
         camera_model="Kepler",
+        binning=2,
         grating_id=1294,
         airmass=1.3,
     )
@@ -292,6 +311,7 @@ def test_limiting_magnitude_reaches_requested_snr(tmp_path):
         target_magnitude=limiting_magnitude,
         magnitude_band="r",
         camera_model="Kepler",
+        binning=2,
         grating_id=1294,
         airmass=1.3,
     )
@@ -299,6 +319,7 @@ def test_limiting_magnitude_reaches_requested_snr(tmp_path):
     assert np.isclose(forward_result["bins"][0].snr, 5.0)
     assert limiting_result["meta"]["target_snr"] == 5.0
     assert limiting_result["meta"]["limiting_magnitude_band"] == "r"
+    assert limiting_result["meta"]["detector_binning"] == 2
 
 
 def test_limiting_magnitude_does_not_depend_on_template_normalization(tmp_path):
