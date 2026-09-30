@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 from .core import (
     DEFAULT_AIRMASS,
     DEFAULT_FIBER_COUPLING_EFFICIENCY,
+    DEFAULT_FIBER_LENGTH,
     DEFAULT_SKY_BACKGROUND,
     ETCCalculator,
     get_default_spectrum_file,
@@ -207,7 +208,8 @@ class ETCGui(tk.Tk):
         toggles_frame.pack(fill=tk.X, pady=6)
         for index, (name, var) in enumerate(self.toggle_vars.items()):
             row, column = divmod(index, 4)
-            toggle = SquareToggle(toggles_frame, name.capitalize(), var, color=ACCENT_COLORS[0])
+            label = name.replace("_", " ").title()
+            toggle = SquareToggle(toggles_frame, label, var, color=ACCENT_COLORS[0])
             toggle.grid(row=row, column=column, padx=8, pady=6, sticky=tk.W)
 
         fields_frame = ttk.LabelFrame(root, text="SNR inputs")
@@ -218,7 +220,12 @@ class ETCGui(tk.Tk):
             ("exp_time", "", "s", "Exposure Time:"),
             ("wave_centers_nm", "450,550,650,750", "nm", "Wave Centers (comma-separated):"),
             ("binsize_nm", "", "nm", "Bin Size:"),
-            ("fiber_length_m", "10", "m", "Fiber Length:"),
+            (
+                "fiber_length_m",
+                f"{DEFAULT_FIBER_LENGTH.value:g}",
+                "m",
+                "Fiber Length:",
+            ),
             ("fiber_coupling_efficiency", f"{DEFAULT_FIBER_COUPLING_EFFICIENCY:g}", "(0-1)", "Fiber Coupling Efficiency:"),
         ]
 
@@ -405,6 +412,7 @@ class ETCGui(tk.Tk):
         self.output.insert(tk.END, f"Fiber coupling efficiency: {meta['fiber_coupling_efficiency']:.1f}\n")
         self.output.insert(tk.END, f"Sky background: {meta['sky_background']}\n")
         self.output.insert(tk.END, f"Detector temperature: {meta['detector_temperature_c']:.0f} C\n")
+        self.output.insert(tk.END, f"Detector binning: {meta['detector_binning']}x{meta['detector_binning']}\n")
         self.output.insert(tk.END, f"Read noise: {read_noise:.2f} e-\n")
         if meta["target_magnitude"] is not None:
             target_magnitude = meta["target_magnitude"]
@@ -469,6 +477,7 @@ class ETCGui(tk.Tk):
                 f"Fiber coupling efficiency: {meta['fiber_coupling_efficiency']:.1f}\n"
                 f"Sky background: {meta['sky_background']}\n"
                 f"Detector temperature: {meta['detector_temperature_c']:.0f} C\n"
+                f"Detector binning: {meta['detector_binning']}x{meta['detector_binning']}\n"
                 f"Read noise: {read_noise:.2f} e-\n"
                 f"Exposure: {meta['exp_time']:g} s\n\n"
                 # f"In order to achieve S/N={target_snr:g} with a "
@@ -511,7 +520,8 @@ class ETCGui(tk.Tk):
         cmap = plt.get_cmap("tab10")
         for index, name in enumerate(self.calc.THROUGHPUT_COMPONENTS):
             if params["throughput_toggles"].get(name, True):
-                ax.plot(wave, components[name], label=name.capitalize(), color=cmap(index % 10), linestyle="--", alpha=0.9, linewidth=1.8)
+                label = name.replace("_", " ").title()
+                ax.plot(wave, components[name], label=label, color=cmap(index % 10), linestyle="--", alpha=0.9, linewidth=1.8)
         ax.plot(wave, components["total"], label="Total", linewidth=3.0, color="#0abd78")
 
         binsize = params["binsize"]

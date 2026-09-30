@@ -5,6 +5,15 @@ import pytest
 from astropy import units as u
 
 from etc.core import AB_ZERO_POINT_JY, ETCCalculator
+from simulator.components import (
+    CANON_EF100_F2,
+    CLAUD_50INCH,
+    E02_PICKOFF,
+    FGL400S,
+    FLI_AR571,
+    NEWPORT_MASTER_1294,
+    THORLABS_AC508_180_AB,
+)
 from simulator.core import FLUX_DENSITY_UNIT
 
 
@@ -33,6 +42,30 @@ def test_detector_sampling_is_derived_from_camera():
     )
     assert extraction_aperture > spectrograph.spatial_fwhm_px.to_value(u.pixel)
     assert 0 < calc.extraction_fraction_for_camera("QHY268") <= 1
+
+
+def test_spectrograph_uses_simulator_hardware_components():
+    calc = ETCCalculator()
+    spectrograph = calc.spectrograph_model("Aurora", 1294)
+
+    assert spectrograph.detector is FLI_AR571
+    assert spectrograph.detector.binning == 2
+    assert spectrograph.grating is NEWPORT_MASTER_1294
+    assert spectrograph.collimator is THORLABS_AC508_180_AB
+    assert spectrograph.camera_lens is CANON_EF100_F2
+    assert spectrograph.optical_elements == (E02_PICKOFF, FGL400S)
+    assert spectrograph.fiber.length == 10 * u.m
+
+    simulator = calc.instrument_simulator("Aurora", 1294, airmass=1.3)
+    assert simulator.telescope is CLAUD_50INCH
+    assert simulator.spectrograph.detector is FLI_AR571
+    assert simulator.spectrograph.grating is NEWPORT_MASTER_1294
+
+    custom_fiber = ETCCalculator(fiber_length_m=7.5).spectrograph_model(
+        "Aurora",
+        1294,
+    ).fiber
+    assert custom_fiber.length == 7.5 * u.m
 
 
 def test_spectral_pixel_count_uses_spectrograph_mapping():
@@ -140,6 +173,7 @@ def test_snr_smoke(tmp_path):
     assert result["meta"]["dispersion_nm_per_pix"] > 0
     assert result["meta"]["fiber_sky_area_arcsec2"] > 0
     assert result["meta"]["detector_temperature_c"] == -20.0
+    assert result["meta"]["detector_binning"] == 1
     assert np.isclose(
         row.n_wave_pixels,
         calc.spectral_pixel_count_for_bin("Kepler", 597.5, 602.5),

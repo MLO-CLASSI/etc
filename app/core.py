@@ -8,19 +8,34 @@ from pathlib import Path
 import numpy as np
 from astropy import constants as const, units as u
 from astropy.table import Table
-from shared_data import CSV_FILES, REFERENCE_SPECTRA
+from shared_data import REFERENCE_SPECTRA
 from simulator import (
     AtmosphericExtinction,
-    DetectorModel,
     InstrumentSimulator,
     SpectrographModel,
-    ThroughputCurve,
     f_lambda_to_photon_flux_density,
 )
-from simulator.core import FLUX_DENSITY_UNIT, TELESCOPE_AREA
+from simulator.components import (
+    CANON_EF100_F2,
+    CLASSI_FIBER,
+    CLAUD_50INCH,
+    E02_PICKOFF,
+    FGL400S,
+    FLI_AR571,
+    FLI_KL400,
+    NEWPORT_MASTER_1229,
+    NEWPORT_MASTER_1294,
+    QHY_268M,
+    THORLABS_AC508_180_AB,
+    THORLABS_GR50A_0305,
+    DetectorModel,
+    FiberModel,
+    GratingModel,
+    ThroughputCurve,
+)
+from simulator.core import FLUX_DENSITY_UNIT
 
-TELESCOPE_FOCAL_LENGTH = 8125 * u.mm
-DEFAULT_FIBER_LENGTH = 10 * u.m
+DEFAULT_FIBER_LENGTH = CLASSI_FIBER.length
 DEFAULT_AIRMASS = 1.3
 DEFAULT_FIBER_COUPLING_EFFICIENCY = 1.0
 FIBER_COUNT = 7
@@ -103,16 +118,6 @@ PHOTOMETRIC_BANDPASSES: dict[str, np.ndarray] = {
 AB_ZERO_POINT_JY = 3631.0
 
 
-@dataclass(frozen=True)
-class CameraConfig:
-    qe_resource: str
-    nx: int
-    ny: int
-    pixel_size: u.Quantity
-    read_noise: u.Quantity
-    dark_current_minus20: u.Quantity
-
-
 @dataclass
 class SNRBinResult:
     wave_center_nm: float
@@ -128,55 +133,25 @@ class SNRBinResult:
 
 
 class ETCCalculator:
-    CAMERA_CONFIGS = {
-        "Aurora": CameraConfig(
-            qe_resource="AR571_qe",
-            nx=6244,
-            ny=4168,
-            pixel_size=3.76*u.um,
-            read_noise=1.0*u.electron,
-            dark_current_minus20=0.002*u.electron/u.s,
-        ),
-        "Kepler": CameraConfig(
-            qe_resource="gsense400bsi_qe",
-            nx=2048,
-            ny=2048,
-            pixel_size=11*u.um,
-            read_noise=1.6*u.electron,
-            dark_current_minus20=0.4*u.electron/u.s,
-        ),
-        "Moravian": CameraConfig(
-            qe_resource="gsense4040bsi_qe",
-            nx=4096,
-            ny=4096,
-            pixel_size=9*u.um,
-            read_noise=3.9*u.electron,
-            dark_current_minus20=0.1*u.electron/u.s, # NOTE: this is a fake value because I can't find a real one
-        ),
-        "QHY268": CameraConfig(
-            qe_resource="qhy268_qe",
-            nx=6280,
-            ny=4210,
-            pixel_size=3.76*u.um,
-            read_noise=2.3*u.electron,
-            dark_current_minus20=0.0005*u.electron/u.s,
-        ),
-        "STF8300": CameraConfig(
-            qe_resource="kaf8300c_qe",
-            nx=3352,
-            ny=2532,
-            pixel_size=5.4*u.um,
-            read_noise=9.3*u.electron,
-            dark_current_minus20=0.001*u.electron/u.s
-        ),
+    CAMERA_MODELS = {
+        "Aurora": FLI_AR571,
+        "Kepler": FLI_KL400,
+        "QHY268": QHY_268M,
+    }
+    GRATING_MODELS = {
+        1294: NEWPORT_MASTER_1294,
+        1229: NEWPORT_MASTER_1229,
+        "thorlabs": THORLABS_GR50A_0305,
     }
 
     THROUGHPUT_COMPONENTS = (
         "atmosphere",
+        "pickoff",
+        "order_filter",
         "fiber",
-        "misc",
         "collimator",
         "grating",
+        "camera_lens",
         "window",
         "detector",
     )
@@ -188,11 +163,11 @@ class ETCCalculator:
 
     @property
     def available_gratings(self) -> list[int | str]:
-        return [1294, 1229, "thorlabs"]
+        return list(self.GRATING_MODELS)
 
     @property
     def available_camera_models(self) -> list[str]:
-        return list(self.CAMERA_CONFIGS)
+        return list(self.CAMERA_MODELS)
 
     @property
     def available_magnitude_bands(self) -> list[str]:
@@ -203,52 +178,78 @@ class ETCCalculator:
         return list(SKY_SPECTRUM_RESOURCES)
 
     @classmethod
-    def _camera_config(cls, camera_model: str) -> CameraConfig:
+    def detector_model(cls, camera_model: str) -> DetectorModel:
         try:
-            return cls.CAMERA_CONFIGS[camera_model]
+            return cls.CAMERA_MODELS[camera_model]
         except KeyError as exc:
-            supported = ", ".join(cls.CAMERA_CONFIGS)
+            supported = ", ".join(cls.CAMERA_MODELS)
             raise ValueError(f"Unsupported camera model '{camera_model}'. Supported: {supported}") from exc
 
-    def detector_model(self, camera_model: str) -> DetectorModel:
-        camera = self._camera_config(camera_model)
-        return DetectorModel(
-            nx=camera.nx,
-            ny=camera.ny,
-            pixel_size=camera.pixel_size,
-            read_noise=camera.read_noise,
-        )
+    @classmethod
+    def grating_model(cls, grating_id: int | str) -> GratingModel:
+        try:
+            return cls.GRATING_MODELS[grating_id]
+        except KeyError as exc:
+            supported = ", ".join(map(str, cls.GRATING_MODELS))
+            raise ValueError(
+                f"Unsupported grating '{grating_id}'. Supported: {supported}"
+            ) from exc
 
-    def spectrograph_model(self, camera_model: str) -> SpectrographModel:
-        return SpectrographModel(
+    def fiber_model(self, fiber_length_m: float | None = None) -> FiberModel:
+        length = (
+            self.fiber_length
+            if fiber_length_m is None
+            else float(fiber_length_m) * u.m
+        )
+        if length < 0 * u.m:
+            raise ValueError("Fiber length cannot be negative.")
+        return replace(CLASSI_FIBER, length=length)
+
+    def spectrograph_model(
+        self,
+        camera_model: str,
+        grating_id: int | str = 1294,
+        fiber_length_m: float | None = None,
+    ) -> SpectrographModel:
+        return SpectrographModel.from_components(
             detector=self.detector_model(camera_model),
-            groove_density=300/u.mm,
+            grating=self.grating_model(grating_id),
+            collimator=THORLABS_AC508_180_AB,
+            camera_lens=CANON_EF100_F2,
+            fiber=self.fiber_model(fiber_length_m),
             incidence_angle=32*u.deg,
             diffraction_angle=-20*u.deg,
-            collimator_focal_length=180*u.mm,
-            camera_focal_length=100*u.mm,
-            fiber_core_diameter=105*u.um,
             diffraction_order=1,
             fiber_count=FIBER_COUNT,
             fiber_pitch=FIBER_PITCH,
+            optical_elements=(E02_PICKOFF, FGL400S),
         )
 
     def default_read_noise_for_camera(self, camera_model: str) -> float:
-        return self._camera_config(camera_model).read_noise.to_value(u.electron)
+        return self.detector_model(camera_model).read_noise.to_value(u.electron)
 
-    def dispersion_for_camera(self, camera_model: str) -> float:
-        return abs(self.spectrograph_model(camera_model).dispersion.to_value(u.nm / u.pixel))
+    def dispersion_for_camera(
+        self,
+        camera_model: str,
+        grating_id: int | str = 1294,
+    ) -> float:
+        return abs(
+            self.spectrograph_model(camera_model, grating_id).dispersion.to_value(
+                u.nm / u.pixel
+            )
+        )
 
     def spectral_pixel_count_for_bin(
         self,
         camera_model: str,
         wave_min_nm: float,
         wave_max_nm: float,
+        grating_id: int | str = 1294,
     ) -> float:
         """Return the detector width of a wavelength bin in pixels."""
         if wave_max_nm <= wave_min_nm:
             raise ValueError("Wavelength-bin maximum must exceed its minimum.")
-        x_edges = self.spectrograph_model(camera_model).wavelength_to_x(
+        x_edges = self.spectrograph_model(camera_model, grating_id).wavelength_to_x(
             np.array([wave_min_nm, wave_max_nm]) * u.nm
         )
         return float(abs(np.diff(x_edges.to_value(u.pixel))[0]))
@@ -266,52 +267,28 @@ class ETCCalculator:
 
     @property
     def fiber_sky_area(self) -> u.Quantity:
-        spectrograph = self.spectrograph_model(self.available_camera_models[0])
-        angular_diameter = (spectrograph.fiber_core_diameter / TELESCOPE_FOCAL_LENGTH).decompose() * u.rad
+        angular_diameter = (
+            CLASSI_FIBER.core_diameter / CLAUD_50INCH.focal_length
+        ).decompose() * u.rad
         return (np.pi * (angular_diameter / 2) ** 2).to(u.arcsec**2)
 
-    @staticmethod
-    def _read_curve(resource_key: str) -> tuple[np.ndarray, np.ndarray]:
-        values = np.loadtxt(CSV_FILES[resource_key], delimiter=",")
-        wavelength = np.asarray(values[:, 0], dtype=float)
-        throughput = np.asarray(values[:, 1], dtype=float)
-        order = np.argsort(wavelength)
-        wavelength = wavelength[order]
-        throughput = throughput[order]
-        if np.nanmax(throughput) > 1.5:
-            throughput = throughput / 100.0
-        return wavelength, throughput
-
-    def _fiber_curve(self, fiber_length_m: float | None = None) -> ThroughputCurve:
-        attenuation = np.loadtxt(CSV_FILES["uvns_attenuation"], delimiter=",")
-        wavelength_nm, attenuation_db_per_km = attenuation.T
-        length = self.fiber_length if fiber_length_m is None else float(fiber_length_m) * u.m
-        if length < 0 * u.m:
-            raise ValueError("Fiber length cannot be negative.")
-        transmission = 10 ** (-attenuation_db_per_km * length.to_value(u.km) / 10)
-        return ThroughputCurve(wavelength_nm * u.nm, transmission, name="fiber")
-
-    def _grating_curve(self, grating_id: int | str) -> ThroughputCurve:
-        if grating_id == 1294:
-            return ThroughputCurve.from_csv(CSV_FILES["master 1294 unpolarized"], name="grating")
-        if grating_id == "thorlabs":
-            return ThroughputCurve.from_csv(CSV_FILES["gr50a-0305_efficiency-780"], name="grating")
-        if grating_id != 1229:
-            raise ValueError(f"Unsupported grating '{grating_id}'. Supported: 1229, 1294, 'thorlabs'")
-
-        p_wave, p_efficiency = self._read_curve("master 1229 P plane")
-        s_wave, s_efficiency = self._read_curve("master 1229 S plane")
-        wave_min = min(p_wave.min(), s_wave.min())
-        wave_max = max(p_wave.max(), s_wave.max())
-        wavelength_nm = np.arange(np.floor(wave_min), np.ceil(wave_max) + 1)
-        p_interp = np.interp(wavelength_nm, p_wave, p_efficiency, left=np.nan, right=np.nan)
-        s_interp = np.interp(wavelength_nm, s_wave, s_efficiency, left=np.nan, right=np.nan)
-        efficiency = np.nanmean(np.vstack((p_interp, s_interp)), axis=0)
-        efficiency = np.nan_to_num(efficiency, nan=0.0)
-        return ThroughputCurve(
-            wavelength_nm * u.nm,
-            efficiency,
-            name="grating",
+    def instrument_simulator(
+        self,
+        camera_model: str,
+        grating_id: int | str,
+        airmass: float = DEFAULT_AIRMASS,
+        fiber_length_m: float | None = None,
+    ) -> InstrumentSimulator:
+        if airmass <= 0:
+            raise ValueError("Airmass must be positive.")
+        return InstrumentSimulator(
+            spectrograph=self.spectrograph_model(
+                camera_model,
+                grating_id,
+                fiber_length_m,
+            ),
+            telescope=CLAUD_50INCH,
+            atmosphere=AtmosphericExtinction(airmass=float(airmass)),
         )
 
     def throughput_curves(
@@ -321,18 +298,26 @@ class ETCCalculator:
         airmass: float = DEFAULT_AIRMASS,
         fiber_length_m: float | None = None,
     ) -> dict[str, ThroughputCurve]:
-        if airmass <= 0:
-            raise ValueError("Airmass must be positive.")
-        camera = self._camera_config(camera_model)
-        return {
-            "atmosphere": AtmosphericExtinction(airmass=float(airmass)),
-            "fiber": self._fiber_curve(fiber_length_m),
-            "misc": ThroughputCurve(np.array([3000.0, 10500.0])*u.AA, np.array([0.95, 0.95]), name="misc"),
-            "collimator": ThroughputCurve.from_csv(CSV_FILES["ac508-180-ab"], name="collimator"),
-            "grating": self._grating_curve(grating_id),
-            "window": ThroughputCurve.from_csv(CSV_FILES["UVFS_coating"], name="window"),
-            "detector": ThroughputCurve.from_csv(CSV_FILES[camera.qe_resource], name="detector"),
-        }
+        simulator = self.instrument_simulator(
+            camera_model,
+            grating_id,
+            airmass,
+            fiber_length_m,
+        )
+        keys = [
+            "atmosphere",
+            "pickoff",
+            "order_filter",
+            "fiber",
+            "collimator",
+            "grating",
+            "camera_lens",
+        ]
+        if simulator.detector.window_resource is not None:
+            keys.append("window")
+        if simulator.detector.qe_resource is not None:
+            keys.append("detector")
+        return dict(zip(keys, simulator.throughputs, strict=True))
 
     def get_throughput_components(
         self,
@@ -354,10 +339,22 @@ class ETCCalculator:
         if throughput_toggles:
             toggles.update(throughput_toggles)
 
-        values = {name: curve(wavelength) for name, curve in curves.items()}
+        values = {
+            name: (
+                curves[name](wavelength)
+                if name in curves
+                else np.ones(wavelength.shape, dtype=float)
+            )
+            for name in self.THROUGHPUT_COMPONENTS
+        }
         active_curves = [curve for name, curve in curves.items() if toggles.get(name, True)]
         simulator = InstrumentSimulator(
-            spectrograph=self.spectrograph_model(camera_model),
+            spectrograph=self.spectrograph_model(
+                camera_model,
+                grating_id,
+                fiber_length_m,
+            ),
+            telescope=CLAUD_50INCH,
             throughputs=active_curves,
         )
         values["total"] = simulator.combined_throughput(wavelength)
@@ -365,7 +362,7 @@ class ETCCalculator:
 
     @classmethod
     def get_dark_current(cls, camera_model: str) -> u.Quantity:
-        return cls._camera_config(camera_model).dark_current_minus20
+        return cls.detector_model(camera_model).dark_current
 
     @staticmethod
     def load_spectrum(spectrum_file: Path | str) -> np.ndarray:
@@ -499,7 +496,7 @@ class ETCCalculator:
         photon_flux_density = f_lambda_to_photon_flux_density(
             wavelength,
             flux_density,
-            TELESCOPE_AREA,
+            CLAUD_50INCH.collecting_area,
         )
         wavelength_angstrom = wavelength.to_value(u.AA)
         detected_rate_density = (
@@ -544,7 +541,7 @@ class ETCCalculator:
         if not 0 <= fiber_coupling_efficiency <= 1:
             raise ValueError("Fiber coupling efficiency must be between 0 and 1.")
 
-        self._camera_config(camera_model)
+        detector = self.detector_model(camera_model)
         spec = self.load_spectrum(spectrum_file)
         spectrum_scale_factor = 1.0
         if target_magnitude is not None:
@@ -558,7 +555,7 @@ class ETCCalculator:
 
         use_spectrograph_mapping = dispersion is None
         if use_spectrograph_mapping:
-            dispersion = self.dispersion_for_camera(camera_model)
+            dispersion = self.dispersion_for_camera(camera_model, grating_id)
         if extraction_aperture is None:
             extraction_aperture = self.extraction_aperture_for_camera(camera_model)
         if read_noise_e is None:
@@ -600,6 +597,7 @@ class ETCCalculator:
                     camera_model,
                     wave_min,
                     wave_max,
+                    grating_id,
                 )
             else:
                 n_wave = binsize / dispersion
@@ -691,6 +689,7 @@ class ETCCalculator:
                 "sky_spectrum": SKY_SPECTRUM_RESOURCES[sky_background],
                 "camera_model": camera_model,
                 "read_noise_e": float(read_noise_e),
+                "detector_binning": int(detector.binning),
                 "grating": grating_id,
                 "airmass": float(airmass),
                 "spectrum_scale_factor": float(spectrum_scale_factor),

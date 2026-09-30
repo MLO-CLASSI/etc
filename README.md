@@ -2,7 +2,7 @@
 
 Computes signal-to-noise ratio (SNR) in one or more wavelength bins for an input spectrum and exposure time.
 
-The application reuses the instrument models in `classi-sim` and the curves in `classi-shared-data`, so the ETC and detector simulator use the same telescope area, atmospheric extinction, detector geometry, grating/optics throughput representation, and photon-flux conversion.
+The application constructs the instrument from the hardware components in `classi-sim`, so the ETC and detector simulator use the same telescope, camera, fiber, grating, optics, throughput curves, and photon-flux conversion.
 
 ## Installation and launch
 
@@ -31,12 +31,12 @@ The optional **Flux scale magnitude** field rescales the entire input spectrum s
 ## Instrument options
 
 - **Grating:** Newport 1229, Newport 1294, or the ThorLabs grating curve.
-- **Airmass:** numerical airmass applied to the Palomar atmospheric-extinction curve from `spectrograph-sim`.
-- **Camera model:** selects the detector QE, pixel size, detector dimensions, and read noise.
+- **Airmass:** numerical airmass applied to the Palomar atmospheric-extinction curve from `classi-sim`.
+- **Camera model:** selects a `classi-sim` detector component, including its QE, dimensions, pixel size, binning, read noise, and dark current.
 
-The throughput toggles expose the same component model used by the simulator: atmosphere, fiber, miscellaneous losses, collimator, grating, detector window, and detector QE.
+The throughput toggles expose the same automatically assembled component chain used by the simulator: atmosphere, pickoff mirror, order-blocking filter, fiber, collimator, grating, camera lens, detector window, and detector QE. A component not configured for a particular detector, such as a separate window curve, is represented by unity throughput.
 
-Detector sampling parameters are not user inputs. Dispersion and fiber pitch are calculated from `SpectrographModel`, and read noise is taken from the selected camera configuration. Each extraction box is one full fiber pitch wide, extending halfway toward each adjacent trace.
+Detector sampling parameters are not user inputs. The ETC constructs `SpectrographModel` with `from_components()`, and dispersion and fiber pitch are calculated from that model. Detector noise and binning come directly from the selected simulator camera component. Each extraction box is one full fiber pitch wide, extending halfway toward each adjacent trace.
 
 ## SNR inputs
 
@@ -51,7 +51,7 @@ Detector sampling parameters are not user inputs. Dispersion and fiber pitch are
 
 Fiber coupling represents point-source light lost before entering the fiber. It applies to source counts but not sky counts. The telescope diameter, pixel scale, lens throughput, detector read noise, dispersion, and spatial extraction width are not independent GUI inputs. Instrument geometry and throughput are taken from the shared simulator model instead.
 
-The detector is assumed to operate at -20&deg;C. Each camera's fixed -20&deg;C dark-current value is used, and there is no temperature input.
+The detector is assumed to operate at -20&deg;C. Each camera's fixed -20&deg;C dark-current value is used, and there is no temperature input. The Aurora component currently uses 2&times;2 binning, as configured in `classi-sim`; its effective pixel size, read noise, and dark current therefore describe a binned output pixel.
 
 ## Sky and extraction model
 
